@@ -1,111 +1,9 @@
-import React, { useMemo, useState } from "react";
-// --- CleanNumberInput: kontrollerer format, ingen leading zeros, tomt felt er tillatt
-// --- CleanPercentInput: tillater 0–2 desimaler, ingen leading zeros, tom input OK
-type CleanPercentInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
-  value: number;
-  onValue: (n: number) => void;
-};
+ import React, { useMemo, useState, useEffect } from "react";
+import type { Currency } from "../App";
 
-function CleanPercentInput({ value, onValue, ...rest }: CleanPercentInputProps) {
-  const [text, setText] = useState<string>(value === 0 ? "" : String(value));
-
-  useEffect(() => {
-    const asFloat = text === "" ? 0 : parseFloat(text) || 0;
-    if (asFloat !== value) {
-      setText(value === 0 ? "" : String(value));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-
-  const handleChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
-    let v = e.target.value
-      .replace(/,/g, ".")       // bruk . som desimal
-      .replace(/[^0-9.]/g, ""); // tillat kun tall + punktum
-
-    const parts = v.split(".");
-    if (parts.length > 2) return; // ikke mer enn 1 punkt
-
-    if (parts[1] && parts[1].length > 2) {
-      parts[1] = parts[1].slice(0, 2); // maks 2 desimaler
-    }
-
-    v = parts.join(".");
-
-    // Fjern leading zeros fra heltallsdelen (men ikke "0.xx")
-    if (v.startsWith("0") && !v.startsWith("0.")) {
-      v = String(parseInt(v, 10));
-    }
-
-    setText(v);
-    onValue(v === "" ? 0 : parseFloat(v));
-  };
-
-  return (
-    <input
-      type="text"
-      inputMode="decimal"
-      value={text}
-      onChange={handleChange}
-      {...rest}
-    />
-  );
-}
-
-import React, { useEffect, useState } from "react";
-
-type CleanNumberInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
-  value: number;
-  onValue: (n: number) => void;
-};
-
-/**
- * Viser et tekstfelt med numerisk tastatur (mobil), lagrer en intern tekststreng,
- * og kaller onValue med et heltall (0 hvis feltet er tomt).
- * - Fjerner ikke-numeriske tegn
- * - Fjerner ledende nuller ("0333" -> "333")
- * - Viser tom streng i stedet for "0" når state=0 (så du slipper "0" som start)
- */
-function CleanNumberInput({ value, onValue, ...rest }: CleanNumberInputProps) {
-  const [text, setText] = useState<string>(value === 0 ? "" : String(value));
-
-  // Hvis ekstern value endres (fra reset o.l.), synkroniser visning
-  useEffect(() => {
-    const asInt = text === "" ? 0 : parseInt(text, 10) || 0;
-    if (asInt !== value) {
-      setText(value === 0 ? "" : String(value));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-
-  const handleChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
-    // behold bare sifre
-    let v = e.target.value.replace(/\D/g, "");
-    // fjern ledende nuller dersom det finnes flere sifre
-    v = v.replace(/^0+(?=\d)/, "");
-    setText(v);
-
-    // tom streng => 0
-    onValue(v === "" ? 0 : parseInt(v, 10));
-  };
-
-  return (
-    <input
-      type="text"
-      inputMode="numeric"
-      pattern="[0-9]*"
-      value={text}
-      onChange={handleChange}
-      {...rest}
-    />
-  );
-}
-
-/**
- * Currency formatting without decimals, for NOK / EUR / USD / ZAR.
- * We only change symbol/locale – we do NOT auto-convert amounts.
- * (All numbers are assumed to be in the selected currency.)
- */
-const currencyFormat = (currency: "NOK" | "EUR" | "USD" | "ZAR") =>
+/* ----------------------------- Formatting ----------------------------- */
+/** Currency formatting without decimals (NOK/EUR/USD/ZAR). No auto-convert. */
+const currencyFormat = (currency: Currency) =>
   new Intl.NumberFormat(
     currency === "NOK"
       ? "nb-NO"
@@ -114,350 +12,335 @@ const currencyFormat = (currency: "NOK" | "EUR" | "USD" | "ZAR") =>
       : currency === "USD"
       ? "en-US"
       : "en-ZA", // ZAR
-    { style: "currency", currency, maximumFractionDigits: 0, minimumFractionDigits: 0 }
+    { style: "currency", currency, maximumFractionDigits: 0 }
   );
 
-/** A tiny helper for clamping slider/text inputs */
-const num = (v: any, fallback = 0) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
+/* ------------------------------ Inputs UX ----------------------------- */
+/** CleanNumberInput – integers only (no leading zeros unless value = 0) */
+type CleanNumberInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
+  value: number;
+  onValue: (n: number) => void;
 };
+function CleanNumberInput({ value, onValue, ...rest }: CleanNumberInputProps) {
+  const [text, setText] = useState<string>(value === 0 ? "" : String(value));
 
-type Currency = "NOK" | "EUR" | "USD" | "ZAR";
+  useEffect(() => {
+    // sync down if value changed externally
+    if ((text === "" ? 0 : parseInt(text, 10) || 0) !== value) {
+      setText(value === 0 ? "" : String(value));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
 
+  const handleChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
+    let v = e.target.value.replace(/[^0-9]/g, ""); // numbers only
+
+    // remove leading zeros, keep "0" if empty
+    if (v.startsWith("0") && v.length > 1) {
+      v = String(parseInt(v, 10));
+    }
+
+    setText(v);
+    onValue(v === "" ? 0 : parseInt(v, 10));
+  };
+
+  return (
+    <input type="text" inputMode="numeric" value={text} onChange={handleChange} {...rest} />
+  );
+}
+
+/** CleanPercentInput – allows 0–2 decimals, no leading zeros (except "0.xx"). */
+type CleanPercentInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
+  value: number;
+  onValue: (n: number) => void;
+};
+function CleanPercentInput({ value, onValue, ...rest }: CleanPercentInputProps) {
+  const [text, setText] = useState<string>(value === 0 ? "" : String(value));
+
+  useEffect(() => {
+    const asFloat = text === "" ? 0 : parseFloat(text) || 0;
+    if (asFloat !== value) setText(value === 0 ? "" : String(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const handleChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
+    let v = e.target.value.replace(/,/g, ".").replace(/[^0-9.]/g, "");
+    const parts = v.split(".");
+    if (parts.length > 2) return; // only one dot
+
+    if (parts[1] && parts[1].length > 2) parts[1] = parts[1].slice(0, 2);
+    v = parts.join(".");
+
+    if (v.startsWith("0") && !v.startsWith("0.") && v.length > 1) {
+      v = String(parseInt(v, 10));
+    }
+
+    setText(v);
+    onValue(v === "" ? 0 : parseFloat(v));
+  };
+
+  return (
+    <input type="text" inputMode="decimal" value={text} onChange={handleChange} {...rest} />
+  );
+}
+
+/* ------------------------------ Component ----------------------------- */
 interface Props {
   currency: Currency;
 }
 
+/** Simple 3-year NPV/ROI model across a chain. */
 export default function ChainROI({ currency }: Props) {
-  // --- Key inputs (all per STORE unless marked otherwise) ---
-  const [stores, setStores] = useState(100);                       // stores in the chain
-  const [annualRevenuePerStore, setAnnualRevenuePerStore] = useState(12_000_000); // per store / year
-  const [subscriptionFeePerStore, setSubscriptionFeePerStore] = useState(600_000); // per store / year (cost)
-  const [discountRatePct, setDiscountRatePct] = useState(10);     // WACC/discount
-  const [grossMarginPct, setGrossMarginPct] = useState(32);       // baseline gross margin
-  const [salesUpliftPct, setSalesUpliftPct] = useState(1.5);      // uplift in sales (% of revenue)
-  const [marginImprovementPP, setMarginImprovementPP] = useState(0.5); // margin improvement (percentage points)
-  const [wasteReductionPct, setWasteReductionPct] = useState(0.5); // shrink/waste reduction (% of revenue)
-  const [laborEfficiencyPct, setLaborEfficiencyPct] = useState(2.0); // OPEX saving proxy (% of revenue)
-  const [complianceSavingPerStore, setComplianceSavingPerStore] = useState(10_000); // fixed saving per store / year
+  /* Key inputs */
+  const [stores, setStores] = useState<number>(100);
+  const [revenuePerStore, setRevenuePerStore] = useState<number>(12_000_000);
+  const [subscriptionPerStore, setSubscriptionPerStore] = useState<number>(600_000);
+  const [discountRate, setDiscountRate] = useState<number>(10); // WACC %
+  const [grossMargin, setGrossMargin] = useState<number>(32); // %
+  const [salesUplift, setSalesUplift] = useState<number>(1.5); // %
+  const [labourEfficiency, setLabourEfficiency] = useState<number>(2.0); // %
+  const [wastageReduction, setWastageReduction] = useState<number>(0.5); // %
+  const [complianceSaving, setComplianceSaving] = useState<number>(10_000);
 
-  // Adoption curve (what % of stores realize value each year)
-  const [adoptY1Pct, setAdoptY1Pct] = useState(20);
-  const [adoptY2Pct, setAdoptY2Pct] = useState(70);
-  const [adoptY3Pct, setAdoptY3Pct] = useState(100);
+  const [adoptionY1, setAdoptionY1] = useState<number>(20);
+  const [adoptionY2, setAdoptionY2] = useState<number>(70);
+  const [adoptionY3, setAdoptionY3] = useState<number>(100);
 
-  const fmt = currencyFormat(currency);
+  const fmt = useMemo(() => currencyFormat(currency), [currency]);
 
-  /**
-   * Value Model (simple, transparent):
-   * Incremental per store per year =
-   *   Sales uplift value:
-   *      revenue * (salesUplift%) * (baseline margin + marginPP)  (added profit from extra sales)
-   *   + Margin improvement:
-   *      revenue * (marginPP)                                     (extra margin points on base sales)
-   *   + Waste/shrink reduction:
-   *      revenue * (wasteReduction%)                               (conservative: treat as direct saving)
-   *   + Labor efficiency:
-   *      revenue * (laborEfficiency%)                              (proxy for staff/OPEX saving)
-   *   + Fixed compliance saving
-   *
-   * Costs per store per year = subscriptionFeePerStore
-   */
-  const computed = useMemo(() => {
-    const rev = num(annualRevenuePerStore, 0);
-    const baseMargin = num(grossMarginPct, 0) / 100;
-    const marginPP = num(marginImprovementPP, 0) / 100;
+  /* Calculations */
+  const results = useMemo(() => {
+    const r = discountRate / 100;
 
-    const salesUplift = rev * (num(salesUpliftPct, 0) / 100) * (baseMargin + marginPP);
-    const marginGain = rev * marginPP;
-    const wasteSaving = rev * (num(wasteReductionPct, 0) / 100);
-    const laborSaving = rev * (num(laborEfficiencyPct, 0) / 100);
-    const fixedCompliance = num(complianceSavingPerStore, 0);
+    // incremental contribution per store (before adoption ramp)
+    const upliftRevenue = revenuePerStore * (salesUplift / 100);
+    const marginProfit = upliftRevenue * (grossMargin / 100);
 
-    const perStoreBenefit = salesUplift + marginGain + wasteSaving + laborSaving + fixedCompliance;
-    const perStoreCost = num(subscriptionFeePerStore, 0);
+    const labourSaving = revenuePerStore * (labourEfficiency / 100);
+    const wasteSaving = revenuePerStore * (wastageReduction / 100);
 
-    // Adoption % per year
-    const y1Adopt = num(adoptY1Pct, 0) / 100;
-    const y2Adopt = num(adoptY2Pct, 0) / 100;
-    const y3Adopt = num(adoptY3Pct, 0) / 100;
+    // Annual net benefit (per store, full adoption)
+    const annualNetPerStore = marginProfit + labourSaving + wasteSaving + complianceSaving - subscriptionPerStore;
 
-    // Discount factor by year (year-end convention)
-    const r = num(discountRatePct, 0) / 100;
-    const df1 = 1 / (1 + r);
-    const df2 = 1 / Math.pow(1 + r, 2);
-    const df3 = 1 / Math.pow(1 + r, 3);
+    // Apply adoption + discount
+    const y1 = (annualNetPerStore * adoptionY1) / 100 / Math.pow(1 + r, 1);
+    const y2 = (annualNetPerStore * adoptionY2) / 100 / Math.pow(1 + r, 2);
+    const y3 = (annualNetPerStore * adoptionY3) / 100 / Math.pow(1 + r, 3);
 
-    // Chain-level annual cash flows (benefit minus cost)
-    const year1 = (stores * y1Adopt) * (perStoreBenefit - perStoreCost);
-    const year2 = (stores * y2Adopt) * (perStoreBenefit - perStoreCost);
-    const year3 = (stores * y3Adopt) * (perStoreBenefit - perStoreCost);
+    const npvPerStore = y1 + y2 + y3;
+    const npvChain = npvPerStore * stores;
 
-    const npv = year1 * df1 + year2 * df2 + year3 * df3;
+    // PV of subscription (cost only) for ROI denominator
+    const c1 = (subscriptionPerStore * adoptionY1) / 100 / Math.pow(1 + r, 1);
+    const c2 = (subscriptionPerStore * adoptionY2) / 100 / Math.pow(1 + r, 2);
+    const c3 = (subscriptionPerStore * adoptionY3) / 100 / Math.pow(1 + r, 3);
+    const pvSubPerStore = c1 + c2 + c3;
+    const pvSubChain = pvSubPerStore * stores || 1; // avoid /0
 
-    // ROI = (NPV benefits – NPV costs) / NPV costs.
-    // We approximate NPV of costs by applying the same adoption to perStoreCost.
-    const costY1 = (stores * y1Adopt) * perStoreCost;
-    const costY2 = (stores * y2Adopt) * perStoreCost;
-    const costY3 = (stores * y3Adopt) * perStoreCost;
-    const npvCosts = costY1 * df1 + costY2 * df2 + costY3 * df3;
-
-    const roi = npvCosts !== 0 ? (npv / npvCosts) : 0;
-
-    // Simple payback: when cumulative undiscounted CF turns positive
-    const cum1 = year1;
-    const cum2 = year1 + year2;
-    const cum3 = year1 + year2 + year3;
-    let paybackYears: string | number = "—";
-    if (cum1 >= 0) paybackYears = 1;
-    else if (cum2 >= 0) paybackYears = 2;
-    else if (cum3 >= 0) paybackYears = 3;
+    const roiPct = (npvChain / pvSubChain - 1) * 100;
 
     return {
-      perStoreBenefit,
-      perStoreCost,
-      year1,
-      year2,
-      year3,
-      npv,
-      roi,
-      paybackYears,
-      perStoreBreakdown: {
-        salesUplift,
-        marginGain,
-        wasteSaving,
-        laborSaving,
-        fixedCompliance
-      }
+      annualNetPerStore,
+      npvPerStore,
+      npvChain,
+      roiPct,
+      yByYear: [
+        { year: 1, value: y1 },
+        { year: 2, value: y2 },
+        { year: 3, value: y3 },
+      ],
     };
   }, [
     stores,
-    annualRevenuePerStore,
-    subscriptionFeePerStore,
-    discountRatePct,
-    grossMarginPct,
-    salesUpliftPct,
-    marginImprovementPP,
-    wasteReductionPct,
-    laborEfficiencyPct,
-    complianceSavingPerStore,
-    adoptY1Pct,
-    adoptY2Pct,
-    adoptY3Pct
+    revenuePerStore,
+    subscriptionPerStore,
+    discountRate,
+    grossMargin,
+    salesUplift,
+    labourEfficiency,
+    wastageReduction,
+    complianceSaving,
+    adoptionY1,
+    adoptionY2,
+    adoptionY3,
   ]);
 
   return (
     <div className="app-container">
-      <h1>Orbital Chain ROI Simulator</h1>
+      <h1>Chain ROI Simulator</h1>
 
-      {/* --- Currency is managed by parent (App) --- */}
-      <p style={{ marginTop: -8, color: "var(--muted)" }}>
-        Currency: <strong>{currency}</strong> (no decimals)
-      </p>
-
-      {/* GRID: Inputs left, Results right */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        {/* LEFT: Key Inputs */}
-        <section>
-          <h3 style={{ marginBottom: 8 }}>Key Inputs</h3>
+        {/* LEFT: Outputs */}
+        <div style={{ paddingRight: 8 }}>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ color: "var(--muted)" }}>ROI (full effect)</div>
+            <div style={{ fontSize: 28, fontWeight: 600 }}>
+              {results.roiPct.toFixed(1)}%
+            </div>
+          </div>
 
-          <Field label="Stores in chain" tooltip="Total number of stores in the chain.">
-            <input type="number" value={stores} onChange={(e) => setStores(num(e.target.value, stores))} />
-          </Field>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ color: "var(--muted)" }}>NPV – chain (3 years)</div>
+            <div style={{ fontSize: 28, fontWeight: 600 }}>
+              {fmt.format(Math.round(results.npvChain))}
+            </div>
+          </div>
 
-          <Field
-            label={`Annual revenue per store (${currency})`}
-            tooltip="Average store turnover per year."
-          >
-            <input
-              type="number"
-              value={annualRevenuePerStore}
-              onChange={(e) => setAnnualRevenuePerStore(num(e.target.value, annualRevenuePerStore))}
-            />
-          </Field>
-
-          <Field
-            label={`Annual subscription fee per store (${currency})`}
-            tooltip="Your annual platform/solution fee per store (treated as a cost)."
-          >
-            <input
-              type="number"
-              value={subscriptionFeePerStore}
-              onChange={(e) => setSubscriptionFeePerStore(num(e.target.value, subscriptionFeePerStore))}
-            />
-          </Field>
-
-          <Field
-            label="Discount rate (%)"
-            tooltip="Used for NPV. Typical WACC 8–12%."
-          >
-            <input
-              type="number"
-              value={discountRatePct}
-              onChange={(e) => setDiscountRatePct(num(e.target.value, discountRatePct))}
-            />
-          </Field>
+          <div style={{ marginBottom: 8, color: "var(--muted)" }}>
+            Incremental cash flow per store (discounted)
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {results.yByYear.map((y) => (
+              <li key={y.year} style={{ lineHeight: 1.8 }}>
+                Year {y.year}: <strong>{fmt.format(Math.round(y.value))}</strong>
+              </li>
+            ))}
+          </ul>
 
           <hr />
+          <div style={{ color: "var(--muted)" }}>Annual net value per store (full adoption):</div>
+          <div style={{ fontSize: 20, fontWeight: 600 }}>
+            {fmt.format(Math.round(results.annualNetPerStore))}
+          </div>
+        </div>
 
-          <h4 style={{ margin: "8px 0" }}>Value Drivers (per store)</h4>
-
-          <Field label="Baseline gross margin (%)" tooltip="Gross margin on base sales before improvement.">
-            <input
-              type="number"
-              value={grossMarginPct}
-              onChange={(e) => setGrossMarginPct(num(e.target.value, grossMarginPct))}
+        {/* RIGHT: Inputs */}
+        <div style={{ paddingLeft: 8 }}>
+          <div className="group">
+            <label>Stores in chain</label>
+            <CleanNumberInput
+              value={stores}
+              onValue={setStores}
+              className="input"
+              placeholder="0"
+              onFocus={(e) => e.currentTarget.select()}
             />
-          </Field>
+          </div>
 
-          <Field label="Sales uplift (%)" tooltip="Expected sales growth thanks to loyalty & trust.">
-            <input
-              type="number"
-              step="0.1"
-              value={salesUpliftPct}
-              onChange={(e) => setSalesUpliftPct(num(e.target.value, salesUpliftPct))}
+          <div className="group">
+            <label>Annual revenue per store ({currency})</label>
+            <CleanNumberInput
+              value={revenuePerStore}
+              onValue={setRevenuePerStore}
+              className="input"
+              placeholder="0"
+              onFocus={(e) => e.currentTarget.select()}
             />
-          </Field>
+          </div>
 
-          <Field label="Margin improvement (pp)" tooltip="Gross margin delta in percentage points (e.g., +1.5 = +1.5pp).">
-            <input
-              type="number"
-              step="0.1"
-              value={marginImprovementPP}
-              onChange={(e) => setMarginImprovementPP(num(e.target.value, marginImprovementPP))}
+          <div className="group">
+            <label>Annual subscription / store ({currency})</label>
+            <CleanNumberInput
+              value={subscriptionPerStore}
+              onValue={setSubscriptionPerStore}
+              className="input"
+              placeholder="0"
+              onFocus={(e) => e.currentTarget.select()}
             />
-          </Field>
+          </div>
 
-          <Field label="Waste/shrink reduction (%)" tooltip="Direct saving (conservative assumption).">
-            <input
-              type="number"
-              step="0.1"
-              value={wasteReductionPct}
-              onChange={(e) => setWasteReductionPct(num(e.target.value, wasteReductionPct))}
+          <div className="group">
+            <label>Discount rate (WACC) %</label>
+            <CleanPercentInput
+              value={discountRate}
+              onValue={setDiscountRate}
+              className="input"
+              placeholder="0.0"
+              onFocus={(e) => e.currentTarget.select()}
             />
-          </Field>
-
-          <Field label="Labor/OPEX efficiency (%)" tooltip="Proxy for staff or process efficiency gains.">
-            <input
-              type="number"
-              step="0.1"
-              value={laborEfficiencyPct}
-              onChange={(e) => setLaborEfficiencyPct(num(e.target.value, laborEfficiencyPct))}
-            />
-          </Field>
-
-          <Field label={`Compliance savings per store (${currency})`} tooltip="Fixed annual savings from compliance automation.">
-            <input
-              type="number"
-              value={complianceSavingPerStore}
-              onChange={(e) => setComplianceSavingPerStore(num(e.target.value, complianceSavingPerStore))}
-            />
-          </Field>
-
-          <hr />
-
-          <h4 style={{ margin: "8px 0" }}>Adoption (% of stores live)</h4>
-
-          <Field label="Year 1 adoption (%)" tooltip="Share of stores realizing the value in year 1.">
-            <input type="number" value={adoptY1Pct} onChange={(e) => setAdoptY1Pct(num(e.target.value, adoptY1Pct))} />
-          </Field>
-          <Field label="Year 2 adoption (%)" tooltip="Share of stores realizing the value in year 2.">
-            <input type="number" value={adoptY2Pct} onChange={(e) => setAdoptY2Pct(num(e.target.value, adoptY2Pct))} />
-          </Field>
-          <Field label="Year 3 adoption (%)" tooltip="Share of stores realizing the value in year 3.">
-            <input type="number" value={adoptY3Pct} onChange={(e) => setAdoptY3Pct(num(e.target.value, adoptY3Pct))} />
-          </Field>
-        </section>
-
-        {/* RIGHT: Results */}
-        <section>
-          <h3 style={{ marginBottom: 8 }}>Results</h3>
-
-          <Card title="ROI (3-year, NPV-based)">
-            <Big>{(computed.roi * 100).toFixed(1)}%</Big>
-            <small>ROI = NPV / NPV(costs)</small>
-          </Card>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Card title="Payback (years)">
-              <Big>{computed.paybackYears}</Big>
-              <small>Undiscounted cumulative cash flow</small>
-            </Card>
-            <Card title={`NPV (3 yrs, chain) – ${currency}`}>
-              <Big>{fmt.format(Math.round(computed.npv))}</Big>
-            </Card>
           </div>
 
           <hr />
 
-          <h4>Incremental cash flow (chain)</h4>
-          <ul style={{ marginTop: 8, lineHeight: 1.8 }}>
-            <li>Year 1: <strong>{fmt.format(Math.round(computed.year1))}</strong></li>
-            <li>Year 2: <strong>{fmt.format(Math.round(computed.year2))}</strong></li>
-            <li>Year 3: <strong>{fmt.format(Math.round(computed.year3))}</strong></li>
-          </ul>
-
-          <h4 style={{ marginTop: 16 }}>Per store – annual value breakdown</h4>
-          <ul style={{ marginTop: 8, lineHeight: 1.8 }}>
-            <li>Sales uplift value: <strong>{fmt.format(Math.round(computed.perStoreBreakdown.salesUplift))}</strong></li>
-            <li>Margin improvement: <strong>{fmt.format(Math.round(computed.perStoreBreakdown.marginGain))}</strong></li>
-            <li>Waste/shrink reduction: <strong>{fmt.format(Math.round(computed.perStoreBreakdown.wasteSaving))}</strong></li>
-            <li>Labor/OPEX efficiency: <strong>{fmt.format(Math.round(computed.perStoreBreakdown.laborSaving))}</strong></li>
-            <li>Compliance saving: <strong>{fmt.format(Math.round(computed.perStoreBreakdown.fixedCompliance))}</strong></li>
-          </ul>
-
-          <div style={{ marginTop: 12 }}>
-            <small style={{ color: "var(--muted)" }}>
-              Note: This model is intentionally simple and conservative. Sales uplift uses
-              <em> (baseline margin + margin pp)</em> on incremental sales. Margin pp applies on base revenue.
-              Waste & labor are treated as direct savings. All currency values show no decimals.
-            </small>
+          <div className="group">
+            <label>Gross margin +pp (%)</label>
+            <CleanPercentInput
+              value={grossMargin}
+              onValue={setGrossMargin}
+              className="input"
+              placeholder="0.0"
+              onFocus={(e) => e.currentTarget.select()}
+            />
           </div>
-        </section>
+
+          <div className="group">
+            <label>Sales uplift (%)</label>
+            <CleanPercentInput
+              value={salesUplift}
+              onValue={setSalesUplift}
+              className="input"
+              placeholder="0.0"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </div>
+
+          <div className="group">
+            <label>Labour efficiency (%)</label>
+            <CleanPercentInput
+              value={labourEfficiency}
+              onValue={setLabourEfficiency}
+              className="input"
+              placeholder="0.0"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </div>
+
+          <div className="group">
+            <label>Wastage reduction (%)</label>
+            <CleanPercentInput
+              value={wastageReduction}
+              onValue={setWastageReduction}
+              className="input"
+              placeholder="0.0"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </div>
+
+          <div className="group">
+            <label>Compliance saving / store / year ({currency})</label>
+            <CleanNumberInput
+              value={complianceSaving}
+              onValue={setComplianceSaving}
+              className="input"
+              placeholder="0"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </div>
+
+          <hr />
+
+          <div className="group">
+            <label>Adoption year 1 (%)</label>
+            <CleanPercentInput
+              value={adoptionY1}
+              onValue={setAdoptionY1}
+              className="input"
+              placeholder="0.0"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </div>
+          <div className="group">
+            <label>Adoption year 2 (%)</label>
+            <CleanPercentInput
+              value={adoptionY2}
+              onValue={setAdoptionY2}
+              className="input"
+              placeholder="0.0"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </div>
+          <div className="group">
+            <label>Adoption year 3 (%)</label>
+            <CleanPercentInput
+              value={adoptionY3}
+              onValue={setAdoptionY3}
+              className="input"
+              placeholder="0.0"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
 }
-
-/** Small presentational helpers */
-function Field({
-  label,
-  tooltip,
-  children
-}: {
-  label: string;
-  tooltip?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label style={{ display: "block", marginTop: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <span>{label}</span>
-        {tooltip && <span title={tooltip} style={{ color: "var(--muted)" }}>ⓘ</span>}
-      </div>
-      <div style={{ marginTop: 6 }}>{children}</div>
-    </label>
-  );
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        border: "1px solid var(--border)",
-        background: "var(--panel)",
-        borderRadius: 12,
-        padding: 16
-      }}
-    >
-      <div style={{ color: "var(--muted)", marginBottom: 4 }}>{title}</div>
-      {children}
-    </div>
-  );
-}
-
-function Big({ children }: { children: React.ReactNode }) {
-  return <div style={{ fontSize: 28, fontWeight: 700 }}>{children}</div>;
-}
-
