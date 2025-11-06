@@ -1,450 +1,601 @@
- import React, { useMemo, useState } from "react";
+ // src/components/ChainROI.tsx
+import React, { useMemo, useState } from "react";
 
-/** Keep this in sync with App.tsx’s currency union */
+/** -----------------------------
+ *  Currency helpers (no-decimals)
+ *  ----------------------------- */
 type Currency = "NOK" | "EUR" | "USD" | "ZAR";
 
-/* ----------------------------- Format helpers ----------------------------- */
+const currencyFormat = (currency: Currency) =>
+  new Intl.NumberFormat(
+    currency === "NOK"
+      ? "nb-NO"
+      : currency === "EUR"
+      ? "de-DE"
+      : currency === "USD"
+      ? "en-US"
+      : "en-ZA", // ZAR
+    { style: "currency", currency, maximumFractionDigits: 0, minimumFractionDigits: 0 }
+  );
 
-/** Currency formatter: no decimals, only group separators. */
-function currencyFormatter(currency: Currency) {
-  const locale =
-    currency === "NOK" ? "nb-NO" :
-    currency === "EUR" ? "de-DE" :
-    currency === "USD" ? "en-US" :
-    "en-ZA"; // ZAR
+const pct = (v: number) =>
+  `${Number.isFinite(v) ? (v * 100).toFixed(1) : "0.0"}%`;
 
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 0,
-    minimumFractionDigits: 0
-  });
-}
-const pct = (x: number) => `${(isFinite(x) ? x : 0).toFixed(1)}%`;
-
-/** Accept comma or dot; strip spaces; prevent leading “0x…” → “x…” */
-function parseNum(s: string, fallback = 0): number {
-  if (typeof s !== "string") return fallback;
-  const cleaned = s.trim().replace(/\s+/g, "").replace(",", ".");
-  const n = Number(cleaned);
-  return isFinite(n) ? n : fallback;
-}
-
-/* ---------------------------- Little UI helpers --------------------------- */
-
-const FieldLine: React.FC<{
-  label: string;
-  value: string;
-  onChange: (s: string) => void;
-  placeholder?: string;
-  requiredForStore?: boolean;
-  info?: string;
-  type?: "text" | "number";
-}> = ({ label, value, onChange, placeholder, requiredForStore, info, type = "text" }) => {
-  const [open, setOpen] = useState(false);
+/** -----------------------------
+ *  Small UI bits
+ *  ----------------------------- */
+function BadgeStoreInput() {
   return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <label style={{ color: "var(--muted)" }}>{label}</label>
-        {requiredForStore && (
-          <span
-            style={{
-              fontSize: 10,
-              padding: "2px 6px",
-              borderRadius: 999,
-              border: "1px solid var(--border)",
-              background: "#0f1726",
-              color: "var(--accent)",
-              letterSpacing: ".02em"
-            }}
-          >
-            STORE INPUT
-          </span>
-        )}
-        {info && (
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            title="More info"
-            style={{
-              border: "1px solid var(--border)",
-              background: "#0f1726",
-              color: "var(--text)",
-              width: 18, height: 18,
-              lineHeight: "16px", fontSize: 11,
-              borderRadius: 6, cursor: "pointer"
-            }}
-          >
-            i
-          </button>
-        )}
+    <span
+      style={{
+        marginLeft: 8,
+        fontSize: 10,
+        padding: "2px 6px",
+        borderRadius: 999,
+        background: "#0f1726",
+        border: "1px solid var(--border)",
+        color: "var(--muted)",
+      }}
+      title="Dette fylles inn av butikken"
+    >
+      Store input
+    </span>
+  );
+}
+
+function InfoButton({ text }: { text: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        // enkel “press i for forklaring” – kan byttes til egen modal om ønskelig
+        const asString =
+          typeof text === "string" ? text : (text as any)?.props?.children?.join?.("") ?? "";
+        alert(asString || "No info");
+      }}
+      title="Forklaring"
+      style={{
+        border: "1px solid var(--border)",
+        background: "#0f1726",
+        color: "var(--text)",
+        width: 18,
+        height: 18,
+        lineHeight: "16px",
+        fontSize: 11,
+        borderRadius: 6,
+        cursor: "pointer",
+      }}
+    >
+      i
+    </button>
+  );
+}
+
+function KpiCard({
+  title,
+  value,
+  sub,
+  info,
+  danger,
+}: {
+  title: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+  info?: React.ReactNode;
+  danger?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        border: "1px solid var(--border)",
+        background: "var(--panel)",
+        borderRadius: 12,
+        padding: 16,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          justifyContent: "space-between",
+        }}
+      >
+        <div style={{ color: "var(--muted)", fontSize: 12 }}>{title}</div>
+        {info ? <InfoButton text={info} /> : null}
       </div>
+      <div
+        style={{
+          fontSize: 28,
+          fontWeight: 700,
+          marginTop: 6,
+          color: danger ? "#ff6b6b" : "var(--text)",
+        }}
+      >
+        {value}
+      </div>
+      {sub ? (
+        <div style={{ color: "var(--muted)", marginTop: 6, fontSize: 12 }}>{sub}</div>
+      ) : null}
+    </div>
+  );
+}
 
-      {open && info && (
-        <div
-          style={{
-            marginBottom: 8,
-            background: "#0f1726",
-            border: "1px solid var(--border)",
-            padding: 10,
-            borderRadius: 8,
-            color: "var(--muted)",
-            fontSize: 12
-          }}
-        >
-          {info}
-        </div>
-      )}
-
+/** -----------------------------
+ *  Input with numeric sanitizing
+ *  ----------------------------- */
+/**
+ * Vi bruker tekstfelt (ikke type="number") + inputMode="numeric"
+ * så vi slipper auto-0 og spinner. Vi parser manuelt.
+ */
+function NumInput({
+  label,
+  value,
+  setValue,
+  placeholder,
+  rightInfo,
+}: {
+  label: React.ReactNode;
+  value: string;
+  setValue: (s: string) => void;
+  placeholder?: string;
+  rightInfo?: React.ReactNode;
+}) {
+  return (
+    <label style={{ display: "block", marginTop: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          justifyContent: "space-between",
+          marginBottom: 6,
+        }}
+      >
+        <span style={{ color: "var(--muted)" }}>{label}</span>
+        {rightInfo}
+      </div>
       <input
-        inputMode="decimal"
-        type={type}
+        type="text"
+        inputMode="numeric"
         placeholder={placeholder}
         value={value}
-        onChange={(e) => {
-          // prevent “0x” when first char is 0 and second is digit
-          let next = e.target.value;
-          if (/^0\d/.test(next)) next = next.replace(/^0+/, "");
-          onChange(next);
-        }}
+        onChange={(e) => setValue(e.target.value)}
         style={{
           width: "100%",
           padding: "10px 12px",
           borderRadius: 8,
           border: "1px solid var(--border)",
           background: "#0f1726",
-          color: "var(--text)"
+          color: "var(--text)",
         }}
       />
-    </div>
+    </label>
   );
+}
+
+/** Parser, men lar tom streng være med (viser ikke 0 i feltet) */
+const toNumber = (s: string) => {
+  const cleaned = s.replace(/\s/g, "").replace(",", "."); // støtt komma
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
 };
 
-const KpiCard: React.FC<{
-  title: string;
-  value: React.ReactNode;
-  sub?: string;
-  info?: string;
-  danger?: boolean;
-}> = ({ title, value, sub, info, danger }) => {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="kpi">
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <h3 style={{ margin: 0 }}>{title}</h3>
-        {info && (
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            title="What does this mean?"
-            style={{
-              border: "1px solid var(--border)",
-              background: "#0f1726",
-              color: "var(--text)",
-              width: 18, height: 18,
-              lineHeight: "16px", fontSize: 11,
-              borderRadius: 6, cursor: "pointer"
-            }}
-          >
-            i
-          </button>
-        )}
-      </div>
+const clamp = (n: number, lo: number, hi: number) =>
+  Math.max(lo, Math.min(hi, n));
 
-      {open && info && (
-        <div
-          style={{
-            marginTop: 8,
-            marginBottom: 8,
-            background: "#0f1726",
-            border: "1px solid var(--border)",
-            padding: 10,
-            borderRadius: 8,
-            color: "var(--muted)",
-            fontSize: 12
-          }}
-        >
-          {info}
-        </div>
-      )}
-
-      <div className="big" style={{ color: danger ? "#ff7a7a" : undefined }}>{value}</div>
-      {sub && <div className="sub">{sub}</div>}
-    </div>
-  );
-};
-
-/* -------------------------------- Component -------------------------------- */
-
+/** -----------------------------
+ *  Hovedkomponent
+ *  ----------------------------- */
 export default function ChainROI({ currency }: { currency: Currency }) {
-  const cur = currencyFormatter(currency);
+  const fmt = useMemo(() => currencyFormat(currency), [currency]);
 
-  /* ------------------------------ Store inputs ------------------------------ */
-  // (Store should fill these)
-  const [stores, setStores] = useState("100");
-  const [revPerStore, setRevPerStore] = useState("1200000");          // annual revenue/store
-  const [subPerStore, setSubPerStore] = useState("600000");           // annual subscription/store (cost)
-  const [discountRate, setDiscountRate] = useState("10");             // WACC %
+  // --- Inputs (strings, slik at felt ikke får auto-0)
+  const [storesStr, setStoresStr] = useState("100");
+  const [revStr, setRevStr] = useState("1200000");
+  const [feeStr, setFeeStr] = useState("600000");
+  const [waccStr, setWaccStr] = useState("10");
 
-  /* -------------------------- Value drivers per store ----------------------- */
-  const [baselineMarginPct, setBaselineMarginPct] = useState("32");
-  const [salesUpliftPct, setSalesUpliftPct]       = useState("1,5");   // accepts comma
-  const [marginImprovementPP, setMarginImprovementPP] = useState("0,5");
-  const [wasteReductionPct, setWasteReductionPct] = useState("0,5");
-  const [laborEfficiencyPct, setLaborEfficiencyPct] = useState("2");
-  const [complianceSaving, setComplianceSaving] = useState("10000");   // currency
+  const [marginStr, setMarginStr] = useState("32"); // %
+  const [upliftStr, setUpliftStr] = useState("1,5"); // %
+  const [ppStr, setPpStr] = useState("0,5"); // %-poeng
+  const [wasteStr, setWasteStr] = useState("0,5"); // %
+  const [laborStr, setLaborStr] = useState("2"); // %
+  const [complianceStr, setComplianceStr] = useState("10000"); // fast beløp
 
-  /* ------------------------------ Adoption curve ---------------------------- */
-  const [adoptY1, setAdoptY1] = useState("20");
-  const [adoptY2, setAdoptY2] = useState("70");
-  const [adoptY3, setAdoptY3] = useState("100");
+  const [adopt1Str, setAdopt1Str] = useState("20");
+  const [adopt2Str, setAdopt2Str] = useState("70");
+  const [adopt3Str, setAdopt3Str] = useState("100");
 
-  /* ------------------------------ Parsed numbers ---------------------------- */
-  const S     = parseNum(stores, 0);
-  const R     = parseNum(revPerStore, 0);          // revenue/store
-  const Fee   = parseNum(subPerStore, 0);          // fee/store/year
-  const WACC  = parseNum(discountRate, 0) / 100;
+  // --- Tallverdier til beregning
+  const stores = clamp(Math.floor(toNumber(storesStr)), 0, 1_000_000);
+  const revenue = Math.max(0, toNumber(revStr));
+  const fee = Math.max(0, toNumber(feeStr));
+  const WACC = clamp(toNumber(waccStr) / 100, 0, 1);
 
-  const baseMargin = parseNum(baselineMarginPct, 0) / 100; // 0..1
-  const uplift     = parseNum(salesUpliftPct, 0) / 100;    // %
-  const marginPP   = parseNum(marginImprovementPP, 0) / 100; // percentage points → fraction
-  const waste      = parseNum(wasteReductionPct, 0) / 100;
-  const labor      = parseNum(laborEfficiencyPct, 0) / 100;
-  const compliance = parseNum(complianceSaving, 0);
+  const baselineMargin = clamp(toNumber(marginStr) / 100, 0, 1);
+  const salesUplift = clamp(toNumber(upliftStr) / 100, -1, 1);
+  const marginPP = clamp(toNumber(ppStr) / 100, -1, 1);
+  const wasteReduction = clamp(toNumber(wasteStr) / 100, -1, 1);
+  const laborEfficiency = clamp(toNumber(laborStr) / 100, -1, 1);
+  const complianceSaving = Math.max(0, toNumber(complianceStr));
 
-  const a1 = parseNum(adoptY1, 0) / 100;
-  const a2 = parseNum(adoptY2, 0) / 100;
-  const a3 = parseNum(adoptY3, 0) / 100;
+  const adopt1 = clamp(toNumber(adopt1Str) / 100, 0, 1);
+  const adopt2 = clamp(toNumber(adopt2Str) / 100, 0, 1);
+  const adopt3 = clamp(toNumber(adopt3Str) / 100, 0, 1);
 
-  /* ----------------------- Per-store annual value model --------------------- */
-  const perStoreBreakdown = useMemo(() => {
-    // Conservative & simple:
-    const salesUpliftValue = R * (baseMargin + marginPP) * uplift;
-    const marginImprovementValue = R * marginPP;
-    const wasteReductionValue = R * waste;
-    const laborValue = R * labor; // treat as direct opex saving
-    const complianceValue = compliance;
+  // --- Per-store verdi (årlig)
+  const salesUpliftValue =
+    revenue * (baselineMargin + marginPP) * salesUplift;
+  const marginImprovementValue = revenue * marginPP;
+  const wasteReductionValue = revenue * wasteReduction;
+  const laborValue = revenue * laborEfficiency;
+  const complianceValue = complianceSaving;
 
-    const total = salesUpliftValue + marginImprovementValue + wasteReductionValue + laborValue + complianceValue - Fee;
-    return {
-      salesUpliftValue,
-      marginImprovementValue,
-      wasteReductionValue,
-      laborValue,
-      complianceValue,
-      total
-    };
-  }, [R, baseMargin, marginPP, uplift, waste, labor, compliance, Fee]);
+  const perStoreTotal =
+    salesUpliftValue +
+    marginImprovementValue +
+    wasteReductionValue +
+    laborValue +
+    complianceValue;
 
-  /* ------------------------- 3-year chain cash flows ------------------------ */
-  const chainCF = useMemo(() => {
-    const v = perStoreBreakdown.total;
-    return [
-      S * a1 * v,
-      S * a2 * v,
-      S * a3 * v
-    ];
-  }, [S, a1, a2, a3, perStoreBreakdown]);
+  const perStoreNet = perStoreTotal - fee;
 
-  const chainNPV = useMemo(() => {
-    // discount chainCF (at end of each year)
-    return chainCF[0] / (1 + WACC) + chainCF[1] / Math.pow(1 + WACC, 2) + chainCF[2] / Math.pow(1 + WACC, 3);
-  }, [chainCF, WACC]);
+  // --- Kjedeflyt og NPV
+  const cf1 = perStoreNet * stores * adopt1;
+  const cf2 = perStoreNet * stores * adopt2;
+  const cf3 = perStoreNet * stores * adopt3;
 
-  // The “cost NPV” is simply the discounted subscription cost (embedded in perStoreBreakdown.total),
-  // so ROI (NPV-based) = NPV / NPV(costs).
-  const costPerStore = Fee; // yearly
-  const costChain = [S * a1 * costPerStore, S * a2 * costPerStore, S * a3 * costPerStore];
-  const costNPV = costChain[0] / (1 + WACC) + costChain[1] / Math.pow(1 + WACC, 2) + costChain[2] / Math.pow(1 + WACC, 3);
-  const roiNPV = costNPV > 0 ? (chainNPV / costNPV) * 100 : 0;
+  const d1 = cf1 / (1 + WACC) ** 1;
+  const d2 = cf2 / (1 + WACC) ** 2;
+  const d3 = cf3 / (1 + WACC) ** 3;
 
-  // Payback years from undiscounted cumulative chain cash flow
+  const chainNPV = d1 + d2 + d3;
+
+  // Kostnads-NPV = abonnementsavgift diskontert, vektet av adopsjon
+  const costNPV =
+    (fee * stores * adopt1) / (1 + WACC) ** 1 +
+    (fee * stores * adopt2) / (1 + WACC) ** 2 +
+    (fee * stores * adopt3) / (1 + WACC) ** 3;
+
+  const roiNPV = costNPV > 0 ? chainNPV / costNPV : 0;
+
+  // Payback (år) – udiskontert kumulativ
   const paybackYears = useMemo(() => {
-    const cumulative = [chainCF[0], chainCF[0] + chainCF[1], chainCF[0] + chainCF[1] + chainCF[2]];
-    const needed = 0; // since v already net of fee, we check when cumulative > 0
-    if (cumulative[0] > needed) return 1;
-    if (cumulative[1] > needed) return 2;
-    if (cumulative[2] > needed) return 3;
-    return Infinity;
-  }, [chainCF]);
+    const y1 = cf1;
+    const y2 = y1 + cf2;
+    const y3 = y2 + cf3;
+    if (y1 >= 0) return 1;
+    if (y2 >= 0) return 2;
+    if (y3 >= 0) return 3;
+    return Number.POSITIVE_INFINITY; // "—"
+  }, [cf1, cf2, cf3]);
 
-  /* ---------------------------------- UI ----------------------------------- */
-
-  const fmt = (n: number) => currencyFormatter(currency).format(Math.round(n));
-  const neg = (n: number) => n < 0;
+  const breakdown = {
+    salesUpliftValue,
+    marginImprovementValue,
+    wasteReductionValue,
+    laborValue,
+    complianceValue,
+    total: perStoreNet,
+  };
 
   return (
     <div className="app-container">
       <h1>Orbital Chain ROI Simulator</h1>
-      <div style={{ color: "var(--muted)", marginBottom: 16 }}>
-        Currency: <strong style={{ color: "var(--text)" }}>{currency}</strong> (no decimals)
+      <div style={{ color: "var(--muted)", marginBottom: 12 }}>
+        Currency: <strong>{currency}</strong> (no decimals)
       </div>
 
       {/* KPI cards */}
-      <div className="results-grid" style={{ marginBottom: 16 }}>
+      <div
+        className="results-grid"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 12,
+          marginBottom: 16,
+        }}
+      >
         <KpiCard
           title="ROI (3-year, NPV-based)"
           value={<>{pct(roiNPV)}</>}
           sub="ROI = NPV / NPV(costs)"
-          info="We discount three years of net cash flows (value minus subscription fee). ROI is the ratio of discounted net value to discounted subscription costs. If the subscription cost is set to zero, ROI is shown as 0% to avoid dividing by zero."
+          info={
+            <>
+              <strong>Formel:</strong> ROI = NPV / NPV(costs).{"\n"}
+              Vi diskonterer tre års <em>netto</em> kontantstrøm (per-store verdi{" "}
+              <em>minus</em> årlig abonnementsavgift), multiplisert med andel butikker live
+              per år. Kostnads-NPV er abonnementsavgiften diskontert over tre år. Er
+              abonnementsavgiften 0, settes ROI til 0&nbsp;% (unngår deling på null).
+            </>
+          }
           danger={roiNPV < 0}
         />
+
         <KpiCard
           title="Payback (years)"
           value={<>{Number.isFinite(paybackYears) ? paybackYears : "—"}</>}
           sub="Undiscounted cumulative cash flow"
-          info="Payback is computed from the undiscounted chain cash flow each year. It’s the first year when the running total turns positive. If it never turns positive in 3 years, we show a dash."
+          info={
+            <>
+              Første år hvor <em>udiskontert</em> kumulativ kontantstrøm for kjeden blir
+              positiv. Hvis det ikke skjer innen 3 år, vises en «—».
+            </>
+          }
           danger={!Number.isFinite(paybackYears)}
         />
+
         <KpiCard
           title={`NPV (3 yrs, chain) — ${currency}`}
-          value={<>{fmt(chainNPV)}</>}
-          sub={`Discount rate: ${WACC * 100}%`}
-          info="Net Present Value of the entire chain over three years at the selected discount rate (WACC). Each year’s net cash flow is discounted back to today’s value."
-          danger={neg(chainNPV)}
+          value={<>{fmt.format(Math.round(chainNPV))}</>}
+          sub={`Discount rate (WACC): ${(WACC * 100).toFixed(0)} %`}
+          info={
+            <>
+              <strong>NPV</strong> er summen av diskonterte (WACC) kjedekontantstrømmer i
+              år 1, 2 og 3. Hver års netto kontantstrøm er:
+              {"\n"}
+              (perStoreNetValue × andel live det året) × antall butikker.
+            </>
+          }
+          danger={chainNPV < 0}
         />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        {/* LEFT: Results details */}
-        <div>
-          <div className="kpi" style={{ marginBottom: 16 }}>
-            <h3>Incremental cash flow (chain)</h3>
-            <ul style={{ margin: "8px 0 0 16px" }}>
-              <li>Year 1: <strong className={neg(chainCF[0]) ? "neg" : "pos"}>{fmt(chainCF[0])}</strong></li>
-              <li>Year 2: <strong className={neg(chainCF[1]) ? "neg" : "pos"}>{fmt(chainCF[1])}</strong></li>
-              <li>Year 3: <strong className={neg(chainCF[2]) ? "neg" : "pos"}>{fmt(chainCF[2])}</strong></li>
-            </ul>
-          </div>
+      {/* Inputs + Results */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "420px 1fr",
+          gap: 16,
+        }}
+      >
+        {/* Left panel: inputs */}
+        <div
+          style={{
+            border: "1px solid var(--border)",
+            background: "var(--panel)",
+            borderRadius: 12,
+            padding: 16,
+          }}
+        >
+          <h3 style={{ marginTop: 0 }}>Key Inputs</h3>
 
-          <div className="kpi">
-            <h3>Per store — annual value breakdown</h3>
-            <ul style={{ margin: "8px 0 0 16px" }}>
-              <li>
-                Sales uplift value:{" "}
-                <strong className="pos">{fmt(perStoreBreakdown.salesUpliftValue)}</strong>
-              </li>
-              <li>
-                Margin improvement:{" "}
-                <strong className="pos">{fmt(perStoreBreakdown.marginImprovementValue)}</strong>
-              </li>
-              <li>
-                Waste/shrink reduction:{" "}
-                <strong className="pos">{fmt(perStoreBreakdown.wasteReductionValue)}</strong>
-              </li>
-              <li>
-                Labor/OPEX efficiency:{" "}
-                <strong className="pos">{fmt(perStoreBreakdown.laborValue)}</strong>
-              </li>
-              <li>
-                Compliance saving:{" "}
-                <strong className="pos">{fmt(perStoreBreakdown.complianceValue)}</strong>
-              </li>
-              <li style={{ marginTop: 6 }}>
-                <span style={{ color: "var(--muted)" }}>Net annual value per store (incl. fee): </span>
-                <strong className={neg(perStoreBreakdown.total) ? "neg" : "pos"}>
-                  {fmt(perStoreBreakdown.total)}
-                </strong>
-              </li>
-            </ul>
-          </div>
+          <NumInput
+            label={
+              <>
+                Stores in chain <BadgeStoreInput />
+              </>
+            }
+            value={storesStr}
+            setValue={setStoresStr}
+            placeholder="e.g. 100"
+          />
+          <NumInput
+            label={
+              <>
+                Annual revenue per store ({currency}) <BadgeStoreInput />
+              </>
+            }
+            value={revStr}
+            setValue={setRevStr}
+            placeholder="e.g. 1200000"
+          />
+          <NumInput
+            label={
+              <>
+                Annual subscription fee per store ({currency}) <BadgeStoreInput />
+              </>
+            }
+            value={feeStr}
+            setValue={setFeeStr}
+            placeholder="e.g. 600000"
+            rightInfo={
+              <InfoButton
+                text={
+                  "Fast årlig plattform/abonnements-kost per butikk. Bruk 0 hvis uaktuelt."
+                }
+              />
+            }
+          />
+          <NumInput
+            label={
+              <>
+                Discount rate (WACC) % <BadgeStoreInput />
+              </>
+            }
+            value={waccStr}
+            setValue={setWaccStr}
+            placeholder="e.g. 10"
+            rightInfo={<InfoButton text={"Bruk selskapets veide kapitalkost (WACC)."} />}
+          />
+
+          <h3 style={{ marginTop: 16 }}>Value Drivers (per store)</h3>
+
+          <NumInput
+            label={
+              <>
+                Baseline gross margin (%) <BadgeStoreInput />
+              </>
+            }
+            value={marginStr}
+            setValue={setMarginStr}
+            placeholder="e.g. 32"
+            rightInfo={
+              <InfoButton text={"Butikkens historiske bruttofortjeneste i prosent."} />
+            }
+          />
+          <NumInput
+            label={
+              <>
+                Sales uplift (%) <BadgeStoreInput />
+              </>
+            }
+            value={upliftStr}
+            setValue={setUpliftStr}
+            placeholder="e.g. 1.5"
+            rightInfo={
+              <InfoButton text={"Forventet salgsøkning (prosentvis) på samme varekurv."} />
+            }
+          />
+          <NumInput
+            label={
+              <>
+                Margin improvement (pp) <BadgeStoreInput />
+              </>
+            }
+            value={ppStr}
+            setValue={setPpStr}
+            placeholder="e.g. 0.5"
+            rightInfo={
+              <InfoButton text={"Prosent-poeng forbedring på margin (ikke prosent)."} />
+            }
+          />
+          <NumInput
+            label={
+              <>
+                Waste/shrink reduction (%) <BadgeStoreInput />
+              </>
+            }
+            value={wasteStr}
+            setValue={setWasteStr}
+            placeholder="e.g. 0.5"
+            rightInfo={
+              <InfoButton text={"Redusert svinn i prosent av omsetning."} />
+            }
+          />
+          <NumInput
+            label={
+              <>
+                Labor/OPEX efficiency (%) <BadgeStoreInput />
+              </>
+            }
+            value={laborStr}
+            setValue={setLaborStr}
+            placeholder="e.g. 2"
+            rightInfo={
+              <InfoButton text={"Arbeids-/driftsbesparelse målt i prosent av omsetning."} />
+            }
+          />
+          <NumInput
+            label={
+              <>
+                Compliance savings per store ({currency}) <BadgeStoreInput />
+              </>
+            }
+            value={complianceStr}
+            setValue={setComplianceStr}
+            placeholder="e.g. 10000"
+            rightInfo={
+              <InfoButton text={"Direkte årlig besparelse/risikoreduksjon i kroner."} />
+            }
+          />
+
+          <h3 style={{ marginTop: 16 }}>Adoption (% of stores live)</h3>
+          <NumInput
+            label={
+              <>
+                Year 1 adoption (%) <BadgeStoreInput />
+              </>
+            }
+            value={adopt1Str}
+            setValue={setAdopt1Str}
+            placeholder="e.g. 20"
+          />
+          <NumInput
+            label={
+              <>
+                Year 2 adoption (%) <BadgeStoreInput />
+              </>
+            }
+            value={adopt2Str}
+            setValue={setAdopt2Str}
+            placeholder="e.g. 70"
+          />
+          <NumInput
+            label={
+              <>
+                Year 3 adoption (%) <BadgeStoreInput />
+              </>
+            }
+            value={adopt3Str}
+            setValue={setAdopt3Str}
+            placeholder="e.g. 100"
+          />
         </div>
 
-        {/* RIGHT: Inputs */}
-        <div>
-          <div className="kpi" style={{ marginBottom: 16 }}>
-            <h3>Key Inputs</h3>
-            <FieldLine
-              label="Stores in chain"
-              requiredForStore
-              value={stores}
-              onChange={setStores}
-              info="Total number of stores in the chain."
-            />
-            <FieldLine
-              label={`Annual revenue per store (${currency})`}
-              requiredForStore
-              value={revPerStore}
-              onChange={setRevPerStore}
-              info="Average annual store turnover. Used to scale the value of % improvements."
-            />
-            <FieldLine
-              label={`Annual subscription fee per store (${currency})`}
-              requiredForStore
-              value={subPerStore}
-              onChange={setSubPerStore}
-              info="What you pay per store per year for the solution. Affects ROI and net cash flow."
-            />
-            <FieldLine
-              label="Discount rate (WACC) %"
-              requiredForStore
-              value={discountRate}
-              onChange={setDiscountRate}
-              info="Used to discount future cash flows into today’s money (NPV). Typically your corporate WACC."
+        {/* Right panel: derived results */}
+        <div
+          style={{
+            border: "1px solid var(--border)",
+            background: "var(--panel)",
+            borderRadius: 12,
+            padding: 16,
+          }}
+        >
+          <h3 style={{ marginTop: 0 }}>Incremental cash flow (chain)</h3>
+          <ul style={{ marginTop: 8 }}>
+            <li>
+              Year 1: <strong>{fmt.format(Math.round(cf1))}</strong>
+            </li>
+            <li>
+              Year 2: <strong>{fmt.format(Math.round(cf2))}</strong>
+            </li>
+            <li>
+              Year 3: <strong>{fmt.format(Math.round(cf3))}</strong>
+            </li>
+          </ul>
+
+          <div style={{ height: 12 }} />
+
+          <div
+            style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}
+          >
+            <h3 style={{ margin: 0 }}>Per store — annual value breakdown</h3>
+            <InfoButton
+              text={
+                `Sales uplift value = Revenue_per_store × (baseline_margin + margin_pp) × sales_uplift
+Margin improvement = Revenue_per_store × margin_pp
+Waste/shrink reduction = Revenue_per_store × waste_reduction
+Labor/OPEX efficiency = Revenue_per_store × labor_efficiency
+Compliance saving = fast beløp
+Net annual value per store (incl. fee) = (sum av punktene over) – annual subscription fee per store`
+              }
             />
           </div>
 
-          <div className="kpi" style={{ marginBottom: 16 }}>
-            <h3>Value Drivers (per store)</h3>
-            <FieldLine
-              label="Baseline gross margin (%)"
-              value={baselineMarginPct}
-              onChange={setBaselineMarginPct}
-              info="Existing gross margin before improvements. Affects the value of sales uplift."
-            />
-            <FieldLine
-              label="Sales uplift (%)"
-              value={salesUpliftPct}
-              onChange={setSalesUpliftPct}
-              info="Expected sales increase (like-for-like) due to loyalty and better operations."
-            />
-            <FieldLine
-              label="Margin improvement (pp)"
-              value={marginImprovementPP}
-              onChange={setMarginImprovementPP}
-              info="Gross-margin improvement in percentage points (pp), e.g. 0.5 means +0.5 pp."
-            />
-            <FieldLine
-              label="Waste/shrink reduction (%)"
-              value={wasteReductionPct}
-              onChange={setWasteReductionPct}
-              info="Reduction in waste & shrink; treated as direct saving on base revenue."
-            />
-            <FieldLine
-              label="Labor/OPEX efficiency (%)"
-              value={laborEfficiencyPct}
-              onChange={setLaborEfficiencyPct}
-              info="Direct reduction in operating costs from efficiency (automation, better planning, etc.)."
-            />
-            <FieldLine
-              label={`Compliance savings per store (${currency})`}
-              value={complianceSaving}
-              onChange={setComplianceSaving}
-              info="Fixed annual saving per store from compliance & reporting efficiency."
-            />
-          </div>
-
-          <div className="kpi">
-            <h3>Adoption (% of stores live)</h3>
-            <FieldLine
-              label="Year 1 adoption (%)"
-              value={adoptY1}
-              onChange={setAdoptY1}
-              info="Share of stores live during year 1."
-            />
-            <FieldLine
-              label="Year 2 adoption (%)"
-              value={adoptY2}
-              onChange={setAdoptY2}
-              info="Share of stores live during year 2."
-            />
-            <FieldLine
-              label="Year 3 adoption (%)"
-              value={adoptY3}
-              onChange={setAdoptY3}
-              info="Share of stores live during year 3."
-            />
-          </div>
+          <ul style={{ margin: "8px 0 0 16px" }}>
+            <li>
+              Sales uplift value:{" "}
+              <strong>{fmt.format(Math.round(breakdown.salesUpliftValue))}</strong>
+            </li>
+            <li>
+              Margin improvement:{" "}
+              <strong>{fmt.format(Math.round(breakdown.marginImprovementValue))}</strong>
+            </li>
+            <li>
+              Waste/shrink reduction:{" "}
+              <strong>{fmt.format(Math.round(breakdown.wasteReductionValue))}</strong>
+            </li>
+            <li>
+              Labor/OPEX efficiency:{" "}
+              <strong>{fmt.format(Math.round(breakdown.laborValue))}</strong>
+            </li>
+            <li>
+              Compliance saving:{" "}
+              <strong>{fmt.format(Math.round(breakdown.complianceValue))}</strong>
+            </li>
+            <li style={{ marginTop: 6 }}>
+              <span style={{ color: "var(--muted)" }}>
+                Net annual value per store (incl. fee):{" "}
+              </span>
+              <strong
+                style={{ color: breakdown.total < 0 ? "#ff6b6b" : "var(--text)" }}
+              >
+                {fmt.format(Math.round(breakdown.total))}
+              </strong>
+            </li>
+          </ul>
         </div>
       </div>
     </div>
