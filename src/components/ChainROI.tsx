@@ -1,5 +1,56 @@
 import React, { useMemo, useState } from "react";
 // --- CleanNumberInput: kontrollerer format, ingen leading zeros, tomt felt er tillatt
+// --- CleanPercentInput: tillater 0–2 desimaler, ingen leading zeros, tom input OK
+type CleanPercentInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
+  value: number;
+  onValue: (n: number) => void;
+};
+
+function CleanPercentInput({ value, onValue, ...rest }: CleanPercentInputProps) {
+  const [text, setText] = useState<string>(value === 0 ? "" : String(value));
+
+  useEffect(() => {
+    const asFloat = text === "" ? 0 : parseFloat(text) || 0;
+    if (asFloat !== value) {
+      setText(value === 0 ? "" : String(value));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const handleChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
+    let v = e.target.value
+      .replace(/,/g, ".")       // bruk . som desimal
+      .replace(/[^0-9.]/g, ""); // tillat kun tall + punktum
+
+    const parts = v.split(".");
+    if (parts.length > 2) return; // ikke mer enn 1 punkt
+
+    if (parts[1] && parts[1].length > 2) {
+      parts[1] = parts[1].slice(0, 2); // maks 2 desimaler
+    }
+
+    v = parts.join(".");
+
+    // Fjern leading zeros fra heltallsdelen (men ikke "0.xx")
+    if (v.startsWith("0") && !v.startsWith("0.")) {
+      v = String(parseInt(v, 10));
+    }
+
+    setText(v);
+    onValue(v === "" ? 0 : parseFloat(v));
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={text}
+      onChange={handleChange}
+      {...rest}
+    />
+  );
+}
+
 import React, { useEffect, useState } from "react";
 
 type CleanNumberInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
