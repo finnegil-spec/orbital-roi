@@ -1,4 +1,53 @@
 import React, { useMemo, useState } from "react";
+// --- CleanNumberInput: kontrollerer format, ingen leading zeros, tomt felt er tillatt
+import React, { useEffect, useState } from "react";
+
+type CleanNumberInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
+  value: number;
+  onValue: (n: number) => void;
+};
+
+/**
+ * Viser et tekstfelt med numerisk tastatur (mobil), lagrer en intern tekststreng,
+ * og kaller onValue med et heltall (0 hvis feltet er tomt).
+ * - Fjerner ikke-numeriske tegn
+ * - Fjerner ledende nuller ("0333" -> "333")
+ * - Viser tom streng i stedet for "0" når state=0 (så du slipper "0" som start)
+ */
+function CleanNumberInput({ value, onValue, ...rest }: CleanNumberInputProps) {
+  const [text, setText] = useState<string>(value === 0 ? "" : String(value));
+
+  // Hvis ekstern value endres (fra reset o.l.), synkroniser visning
+  useEffect(() => {
+    const asInt = text === "" ? 0 : parseInt(text, 10) || 0;
+    if (asInt !== value) {
+      setText(value === 0 ? "" : String(value));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const handleChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
+    // behold bare sifre
+    let v = e.target.value.replace(/\D/g, "");
+    // fjern ledende nuller dersom det finnes flere sifre
+    v = v.replace(/^0+(?=\d)/, "");
+    setText(v);
+
+    // tom streng => 0
+    onValue(v === "" ? 0 : parseInt(v, 10));
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      value={text}
+      onChange={handleChange}
+      {...rest}
+    />
+  );
+}
 
 /**
  * Currency formatting without decimals, for NOK / EUR / USD / ZAR.
