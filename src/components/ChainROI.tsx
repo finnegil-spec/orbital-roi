@@ -1,342 +1,448 @@
- import React, { useMemo, useState, useEffect } from "react";
-import type { Currency } from "../App";
+ import React, { useMemo, useState } from "react";
 
-/* ----------------------------- Formatting ----------------------------- */
-/** Currency formatting without decimals (NOK/EUR/USD/ZAR). No auto-convert. */
-const currencyFormat = (currency: Currency) =>
-  new Intl.NumberFormat(
-    currency === "NOK"
-      ? "nb-NO"
-      : currency === "EUR"
-      ? "de-DE"
-      : currency === "USD"
-      ? "en-US"
-      : "en-ZA", // ZAR
-    { style: "currency", currency, maximumFractionDigits: 0 }
-  );
+/** Keep this in sync with App.tsx’s currency union */
+type Currency = "NOK" | "EUR" | "USD" | "ZAR";
 
-/* ------------------------------ Inputs UX ----------------------------- */
-/** CleanNumberInput – integers only (no leading zeros unless value = 0) */
-type CleanNumberInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
-  value: number;
-  onValue: (n: number) => void;
-};
-function CleanNumberInput({ value, onValue, ...rest }: CleanNumberInputProps) {
-  const [text, setText] = useState<string>(value === 0 ? "" : String(value));
+/* ----------------------------- Format helpers ----------------------------- */
 
-  useEffect(() => {
-    // sync down if value changed externally
-    if ((text === "" ? 0 : parseInt(text, 10) || 0) !== value) {
-      setText(value === 0 ? "" : String(value));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+/** Currency formatter: no decimals, only group separators. */
+function currencyFormatter(currency: Currency) {
+  const locale =
+    currency === "NOK" ? "nb-NO" :
+    currency === "EUR" ? "de-DE" :
+    currency === "USD" ? "en-US" :
+    "en-ZA"; // ZAR
 
-  const handleChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
-    let v = e.target.value.replace(/[^0-9]/g, ""); // numbers only
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 0,
+    minimumFractionDigits: 0
+  });
+}
+const pct = (x: number) => `${(isFinite(x) ? x : 0).toFixed(1)}%`;
 
-    // remove leading zeros, keep "0" if empty
-    if (v.startsWith("0") && v.length > 1) {
-      v = String(parseInt(v, 10));
-    }
+/** Accept comma or dot; strip spaces; prevent leading “0x…” → “x…” */
+function parseNum(s: string, fallback = 0): number {
+  if (typeof s !== "string") return fallback;
+  const cleaned = s.trim().replace(/\s+/g, "").replace(",", ".");
+  const n = Number(cleaned);
+  return isFinite(n) ? n : fallback;
+}
 
-    setText(v);
-    onValue(v === "" ? 0 : parseInt(v, 10));
-  };
+/* ---------------------------- Little UI helpers --------------------------- */
 
+const FieldLine: React.FC<{
+  label: string;
+  value: string;
+  onChange: (s: string) => void;
+  placeholder?: string;
+  requiredForStore?: boolean;
+  info?: string;
+  type?: "text" | "number";
+}> = ({ label, value, onChange, placeholder, requiredForStore, info, type = "text" }) => {
+  const [open, setOpen] = useState(false);
   return (
-    <input type="text" inputMode="numeric" value={text} onChange={handleChange} {...rest} />
-  );
-}
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <label style={{ color: "var(--muted)" }}>{label}</label>
+        {requiredForStore && (
+          <span
+            style={{
+              fontSize: 10,
+              padding: "2px 6px",
+              borderRadius: 999,
+              border: "1px solid var(--border)",
+              background: "#0f1726",
+              color: "var(--accent)",
+              letterSpacing: ".02em"
+            }}
+          >
+            STORE INPUT
+          </span>
+        )}
+        {info && (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            title="More info"
+            style={{
+              border: "1px solid var(--border)",
+              background: "#0f1726",
+              color: "var(--text)",
+              width: 18, height: 18,
+              lineHeight: "16px", fontSize: 11,
+              borderRadius: 6, cursor: "pointer"
+            }}
+          >
+            i
+          </button>
+        )}
+      </div>
 
-/** CleanPercentInput – allows 0–2 decimals, no leading zeros (except "0.xx"). */
-type CleanPercentInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
-  value: number;
-  onValue: (n: number) => void;
+      {open && info && (
+        <div
+          style={{
+            marginBottom: 8,
+            background: "#0f1726",
+            border: "1px solid var(--border)",
+            padding: 10,
+            borderRadius: 8,
+            color: "var(--muted)",
+            fontSize: 12
+          }}
+        >
+          {info}
+        </div>
+      )}
+
+      <input
+        inputMode="decimal"
+        type={type}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => {
+          // prevent “0x” when first char is 0 and second is digit
+          let next = e.target.value;
+          if (/^0\d/.test(next)) next = next.replace(/^0+/, "");
+          onChange(next);
+        }}
+        style={{
+          width: "100%",
+          padding: "10px 12px",
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          background: "#0f1726",
+          color: "var(--text)"
+        }}
+      />
+    </div>
+  );
 };
-function CleanPercentInput({ value, onValue, ...rest }: CleanPercentInputProps) {
-  const [text, setText] = useState<string>(value === 0 ? "" : String(value));
 
-  useEffect(() => {
-    const asFloat = text === "" ? 0 : parseFloat(text) || 0;
-    if (asFloat !== value) setText(value === 0 ? "" : String(value));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-
-  const handleChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
-    let v = e.target.value.replace(/,/g, ".").replace(/[^0-9.]/g, "");
-    const parts = v.split(".");
-    if (parts.length > 2) return; // only one dot
-
-    if (parts[1] && parts[1].length > 2) parts[1] = parts[1].slice(0, 2);
-    v = parts.join(".");
-
-    if (v.startsWith("0") && !v.startsWith("0.") && v.length > 1) {
-      v = String(parseInt(v, 10));
-    }
-
-    setText(v);
-    onValue(v === "" ? 0 : parseFloat(v));
-  };
-
+const KpiCard: React.FC<{
+  title: string;
+  value: React.ReactNode;
+  sub?: string;
+  info?: string;
+  danger?: boolean;
+}> = ({ title, value, sub, info, danger }) => {
+  const [open, setOpen] = useState(false);
   return (
-    <input type="text" inputMode="decimal" value={text} onChange={handleChange} {...rest} />
+    <div className="kpi">
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <h3 style={{ margin: 0 }}>{title}</h3>
+        {info && (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            title="What does this mean?"
+            style={{
+              border: "1px solid var(--border)",
+              background: "#0f1726",
+              color: "var(--text)",
+              width: 18, height: 18,
+              lineHeight: "16px", fontSize: 11,
+              borderRadius: 6, cursor: "pointer"
+            }}
+          >
+            i
+          </button>
+        )}
+      </div>
+
+      {open && info && (
+        <div
+          style={{
+            marginTop: 8,
+            marginBottom: 8,
+            background: "#0f1726",
+            border: "1px solid var(--border)",
+            padding: 10,
+            borderRadius: 8,
+            color: "var(--muted)",
+            fontSize: 12
+          }}
+        >
+          {info}
+        </div>
+      )}
+
+      <div className="big" style={{ color: danger ? "#ff7a7a" : undefined }}>{value}</div>
+      {sub && <div className="sub">{sub}</div>}
+    </div>
   );
-}
+};
 
-/* ------------------------------ Component ----------------------------- */
-interface Props {
-  currency: Currency;
-}
+/* -------------------------------- Component -------------------------------- */
 
-/** Simple 3-year NPV/ROI model across a chain. */
-export default function ChainROI({ currency }: Props) {
-  /* Key inputs */
-  const [stores, setStores] = useState<number>(100);
-  const [revenuePerStore, setRevenuePerStore] = useState<number>(12_000_000);
-  const [subscriptionPerStore, setSubscriptionPerStore] = useState<number>(600_000);
-  const [discountRate, setDiscountRate] = useState<number>(10); // WACC %
-  const [grossMargin, setGrossMargin] = useState<number>(32); // %
-  const [salesUplift, setSalesUplift] = useState<number>(1.5); // %
-  const [labourEfficiency, setLabourEfficiency] = useState<number>(2.0); // %
-  const [wastageReduction, setWastageReduction] = useState<number>(0.5); // %
-  const [complianceSaving, setComplianceSaving] = useState<number>(10_000);
+export default function ChainROI({ currency }: { currency: Currency }) {
+  const cur = currencyFormatter(currency);
 
-  const [adoptionY1, setAdoptionY1] = useState<number>(20);
-  const [adoptionY2, setAdoptionY2] = useState<number>(70);
-  const [adoptionY3, setAdoptionY3] = useState<number>(100);
+  /* ------------------------------ Store inputs ------------------------------ */
+  // (Store should fill these)
+  const [stores, setStores] = useState("100");
+  const [revPerStore, setRevPerStore] = useState("1200000");          // annual revenue/store
+  const [subPerStore, setSubPerStore] = useState("600000");           // annual subscription/store (cost)
+  const [discountRate, setDiscountRate] = useState("10");             // WACC %
 
-  const fmt = useMemo(() => currencyFormat(currency), [currency]);
+  /* -------------------------- Value drivers per store ----------------------- */
+  const [baselineMarginPct, setBaselineMarginPct] = useState("32");
+  const [salesUpliftPct, setSalesUpliftPct]       = useState("1,5");   // accepts comma
+  const [marginImprovementPP, setMarginImprovementPP] = useState("0,5");
+  const [wasteReductionPct, setWasteReductionPct] = useState("0,5");
+  const [laborEfficiencyPct, setLaborEfficiencyPct] = useState("2");
+  const [complianceSaving, setComplianceSaving] = useState("10000");   // currency
 
-  /* Calculations */
-  const results = useMemo(() => {
-    const r = discountRate / 100;
+  /* ------------------------------ Adoption curve ---------------------------- */
+  const [adoptY1, setAdoptY1] = useState("20");
+  const [adoptY2, setAdoptY2] = useState("70");
+  const [adoptY3, setAdoptY3] = useState("100");
 
-    // incremental contribution per store (before adoption ramp)
-    const upliftRevenue = revenuePerStore * (salesUplift / 100);
-    const marginProfit = upliftRevenue * (grossMargin / 100);
+  /* ------------------------------ Parsed numbers ---------------------------- */
+  const S     = parseNum(stores, 0);
+  const R     = parseNum(revPerStore, 0);          // revenue/store
+  const Fee   = parseNum(subPerStore, 0);          // fee/store/year
+  const WACC  = parseNum(discountRate, 0) / 100;
 
-    const labourSaving = revenuePerStore * (labourEfficiency / 100);
-    const wasteSaving = revenuePerStore * (wastageReduction / 100);
+  const baseMargin = parseNum(baselineMarginPct, 0) / 100; // 0..1
+  const uplift     = parseNum(salesUpliftPct, 0) / 100;    // %
+  const marginPP   = parseNum(marginImprovementPP, 0) / 100; // percentage points → fraction
+  const waste      = parseNum(wasteReductionPct, 0) / 100;
+  const labor      = parseNum(laborEfficiencyPct, 0) / 100;
+  const compliance = parseNum(complianceSaving, 0);
 
-    // Annual net benefit (per store, full adoption)
-    const annualNetPerStore = marginProfit + labourSaving + wasteSaving + complianceSaving - subscriptionPerStore;
+  const a1 = parseNum(adoptY1, 0) / 100;
+  const a2 = parseNum(adoptY2, 0) / 100;
+  const a3 = parseNum(adoptY3, 0) / 100;
 
-    // Apply adoption + discount
-    const y1 = (annualNetPerStore * adoptionY1) / 100 / Math.pow(1 + r, 1);
-    const y2 = (annualNetPerStore * adoptionY2) / 100 / Math.pow(1 + r, 2);
-    const y3 = (annualNetPerStore * adoptionY3) / 100 / Math.pow(1 + r, 3);
+  /* ----------------------- Per-store annual value model --------------------- */
+  const perStoreBreakdown = useMemo(() => {
+    // Conservative & simple:
+    const salesUpliftValue = R * (baseMargin + marginPP) * uplift;
+    const marginImprovementValue = R * marginPP;
+    const wasteReductionValue = R * waste;
+    const laborValue = R * labor; // treat as direct opex saving
+    const complianceValue = compliance;
 
-    const npvPerStore = y1 + y2 + y3;
-    const npvChain = npvPerStore * stores;
-
-    // PV of subscription (cost only) for ROI denominator
-    const c1 = (subscriptionPerStore * adoptionY1) / 100 / Math.pow(1 + r, 1);
-    const c2 = (subscriptionPerStore * adoptionY2) / 100 / Math.pow(1 + r, 2);
-    const c3 = (subscriptionPerStore * adoptionY3) / 100 / Math.pow(1 + r, 3);
-    const pvSubPerStore = c1 + c2 + c3;
-    const pvSubChain = pvSubPerStore * stores || 1; // avoid /0
-
-    const roiPct = (npvChain / pvSubChain - 1) * 100;
-
+    const total = salesUpliftValue + marginImprovementValue + wasteReductionValue + laborValue + complianceValue - Fee;
     return {
-      annualNetPerStore,
-      npvPerStore,
-      npvChain,
-      roiPct,
-      yByYear: [
-        { year: 1, value: y1 },
-        { year: 2, value: y2 },
-        { year: 3, value: y3 },
-      ],
+      salesUpliftValue,
+      marginImprovementValue,
+      wasteReductionValue,
+      laborValue,
+      complianceValue,
+      total
     };
-  }, [
-    stores,
-    revenuePerStore,
-    subscriptionPerStore,
-    discountRate,
-    grossMargin,
-    salesUplift,
-    labourEfficiency,
-    wastageReduction,
-    complianceSaving,
-    adoptionY1,
-    adoptionY2,
-    adoptionY3,
-  ]);
+  }, [R, baseMargin, marginPP, uplift, waste, labor, compliance, Fee]);
+
+  /* ------------------------- 3-year chain cash flows ------------------------ */
+  const chainCF = useMemo(() => {
+    const v = perStoreBreakdown.total;
+    return [
+      S * a1 * v,
+      S * a2 * v,
+      S * a3 * v
+    ];
+  }, [S, a1, a2, a3, perStoreBreakdown]);
+
+  const chainNPV = useMemo(() => {
+    // discount chainCF (at end of each year)
+    return chainCF[0] / (1 + WACC) + chainCF[1] / Math.pow(1 + WACC, 2) + chainCF[2] / Math.pow(1 + WACC, 3);
+  }, [chainCF, WACC]);
+
+  // The “cost NPV” is simply the discounted subscription cost (embedded in perStoreBreakdown.total),
+  // so ROI (NPV-based) = NPV / NPV(costs).
+  const costPerStore = Fee; // yearly
+  const costChain = [S * a1 * costPerStore, S * a2 * costPerStore, S * a3 * costPerStore];
+  const costNPV = costChain[0] / (1 + WACC) + costChain[1] / Math.pow(1 + WACC, 2) + costChain[2] / Math.pow(1 + WACC, 3);
+  const roiNPV = costNPV > 0 ? (chainNPV / costNPV) * 100 : 0;
+
+  // Payback years from undiscounted cumulative chain cash flow
+  const paybackYears = useMemo(() => {
+    const cumulative = [chainCF[0], chainCF[0] + chainCF[1], chainCF[0] + chainCF[1] + chainCF[2]];
+    const needed = 0; // since v already net of fee, we check when cumulative > 0
+    if (cumulative[0] > needed) return 1;
+    if (cumulative[1] > needed) return 2;
+    if (cumulative[2] > needed) return 3;
+    return Infinity;
+  }, [chainCF]);
+
+  /* ---------------------------------- UI ----------------------------------- */
+
+  const fmt = (n: number) => currencyFormatter(currency).format(Math.round(n));
+  const neg = (n: number) => n < 0;
 
   return (
     <div className="app-container">
-      <h1>Chain ROI Simulator</h1>
+      <h1>Orbital Chain ROI Simulator</h1>
+      <div style={{ color: "var(--muted)", marginBottom: 16 }}>
+        Currency: <strong style={{ color: "var(--text)" }}>{currency}</strong> (no decimals)
+      </div>
+
+      {/* KPI cards */}
+      <div className="results-grid" style={{ marginBottom: 16 }}>
+        <KpiCard
+          title="ROI (3-year, NPV-based)"
+          value={<>{pct(roiNPV)}</>}
+          sub="ROI = NPV / NPV(costs)"
+          info="We discount three years of net cash flows (value minus subscription fee). ROI is the ratio of discounted net value to discounted subscription costs. If the subscription cost is set to zero, ROI is shown as 0% to avoid dividing by zero."
+          danger={roiNPV < 0}
+        />
+        <KpiCard
+          title="Payback (years)"
+          value={<>{Number.isFinite(paybackYears) ? paybackYears : "—"}</>}
+          sub="Undiscounted cumulative cash flow"
+          info="Payback is computed from the undiscounted chain cash flow each year. It’s the first year when the running total turns positive. If it never turns positive in 3 years, we show a dash."
+          danger={!Number.isFinite(paybackYears)}
+        />
+        <KpiCard
+          title={`NPV (3 yrs, chain) — ${currency}`}
+          value={<>{fmt(chainNPV)}</>}
+          sub={`Discount rate: ${WACC * 100}%`}
+          info="Net Present Value of the entire chain over three years at the selected discount rate (WACC). Each year’s net cash flow is discounted back to today’s value."
+          danger={neg(chainNPV)}
+        />
+      </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        {/* LEFT: Outputs */}
-        <div style={{ paddingRight: 8 }}>
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ color: "var(--muted)" }}>ROI (full effect)</div>
-            <div style={{ fontSize: 28, fontWeight: 600 }}>
-              {results.roiPct.toFixed(1)}%
-            </div>
+        {/* LEFT: Results details */}
+        <div>
+          <div className="kpi" style={{ marginBottom: 16 }}>
+            <h3>Incremental cash flow (chain)</h3>
+            <ul style={{ margin: "8px 0 0 16px" }}>
+              <li>Year 1: <strong className={neg(chainCF[0]) ? "neg" : "pos"}>{fmt(chainCF[0])}</strong></li>
+              <li>Year 2: <strong className={neg(chainCF[1]) ? "neg" : "pos"}>{fmt(chainCF[1])}</strong></li>
+              <li>Year 3: <strong className={neg(chainCF[2]) ? "neg" : "pos"}>{fmt(chainCF[2])}</strong></li>
+            </ul>
           </div>
 
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ color: "var(--muted)" }}>NPV – chain (3 years)</div>
-            <div style={{ fontSize: 28, fontWeight: 600 }}>
-              {fmt.format(Math.round(results.npvChain))}
-            </div>
-          </div>
-
-          <div style={{ marginBottom: 8, color: "var(--muted)" }}>
-            Incremental cash flow per store (discounted)
-          </div>
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {results.yByYear.map((y) => (
-              <li key={y.year} style={{ lineHeight: 1.8 }}>
-                Year {y.year}: <strong>{fmt.format(Math.round(y.value))}</strong>
+          <div className="kpi">
+            <h3>Per store — annual value breakdown</h3>
+            <ul style={{ margin: "8px 0 0 16px" }}>
+              <li>
+                Sales uplift value:{" "}
+                <strong className="pos">{fmt(perStoreBreakdown.salesUpliftValue)}</strong>
               </li>
-            ))}
-          </ul>
-
-          <hr />
-          <div style={{ color: "var(--muted)" }}>Annual net value per store (full adoption):</div>
-          <div style={{ fontSize: 20, fontWeight: 600 }}>
-            {fmt.format(Math.round(results.annualNetPerStore))}
+              <li>
+                Margin improvement:{" "}
+                <strong className="pos">{fmt(perStoreBreakdown.marginImprovementValue)}</strong>
+              </li>
+              <li>
+                Waste/shrink reduction:{" "}
+                <strong className="pos">{fmt(perStoreBreakdown.wasteReductionValue)}</strong>
+              </li>
+              <li>
+                Labor/OPEX efficiency:{" "}
+                <strong className="pos">{fmt(perStoreBreakdown.laborValue)}</strong>
+              </li>
+              <li>
+                Compliance saving:{" "}
+                <strong className="pos">{fmt(perStoreBreakdown.complianceValue)}</strong>
+              </li>
+              <li style={{ marginTop: 6 }}>
+                <span style={{ color: "var(--muted)" }}>Net annual value per store (incl. fee): </span>
+                <strong className={neg(perStoreBreakdown.total) ? "neg" : "pos"}>
+                  {fmt(perStoreBreakdown.total)}
+                </strong>
+              </li>
+            </ul>
           </div>
         </div>
 
         {/* RIGHT: Inputs */}
-        <div style={{ paddingLeft: 8 }}>
-          <div className="group">
-            <label>Stores in chain</label>
-            <CleanNumberInput
+        <div>
+          <div className="kpi" style={{ marginBottom: 16 }}>
+            <h3>Key Inputs</h3>
+            <FieldLine
+              label="Stores in chain"
+              requiredForStore
               value={stores}
-              onValue={setStores}
-              className="input"
-              placeholder="0"
-              onFocus={(e) => e.currentTarget.select()}
+              onChange={setStores}
+              info="Total number of stores in the chain."
             />
-          </div>
-
-          <div className="group">
-            <label>Annual revenue per store ({currency})</label>
-            <CleanNumberInput
-              value={revenuePerStore}
-              onValue={setRevenuePerStore}
-              className="input"
-              placeholder="0"
-              onFocus={(e) => e.currentTarget.select()}
+            <FieldLine
+              label={`Annual revenue per store (${currency})`}
+              requiredForStore
+              value={revPerStore}
+              onChange={setRevPerStore}
+              info="Average annual store turnover. Used to scale the value of % improvements."
             />
-          </div>
-
-          <div className="group">
-            <label>Annual subscription / store ({currency})</label>
-            <CleanNumberInput
-              value={subscriptionPerStore}
-              onValue={setSubscriptionPerStore}
-              className="input"
-              placeholder="0"
-              onFocus={(e) => e.currentTarget.select()}
+            <FieldLine
+              label={`Annual subscription fee per store (${currency})`}
+              requiredForStore
+              value={subPerStore}
+              onChange={setSubPerStore}
+              info="What you pay per store per year for the solution. Affects ROI and net cash flow."
             />
-          </div>
-
-          <div className="group">
-            <label>Discount rate (WACC) %</label>
-            <CleanPercentInput
+            <FieldLine
+              label="Discount rate (WACC) %"
+              requiredForStore
               value={discountRate}
-              onValue={setDiscountRate}
-              className="input"
-              placeholder="0.0"
-              onFocus={(e) => e.currentTarget.select()}
+              onChange={setDiscountRate}
+              info="Used to discount future cash flows into today’s money (NPV). Typically your corporate WACC."
             />
           </div>
 
-          <hr />
-
-          <div className="group">
-            <label>Gross margin +pp (%)</label>
-            <CleanPercentInput
-              value={grossMargin}
-              onValue={setGrossMargin}
-              className="input"
-              placeholder="0.0"
-              onFocus={(e) => e.currentTarget.select()}
+          <div className="kpi" style={{ marginBottom: 16 }}>
+            <h3>Value Drivers (per store)</h3>
+            <FieldLine
+              label="Baseline gross margin (%)"
+              value={baselineMarginPct}
+              onChange={setBaselineMarginPct}
+              info="Existing gross margin before improvements. Affects the value of sales uplift."
             />
-          </div>
-
-          <div className="group">
-            <label>Sales uplift (%)</label>
-            <CleanPercentInput
-              value={salesUplift}
-              onValue={setSalesUplift}
-              className="input"
-              placeholder="0.0"
-              onFocus={(e) => e.currentTarget.select()}
+            <FieldLine
+              label="Sales uplift (%)"
+              value={salesUpliftPct}
+              onChange={setSalesUpliftPct}
+              info="Expected sales increase (like-for-like) due to loyalty and better operations."
             />
-          </div>
-
-          <div className="group">
-            <label>Labour efficiency (%)</label>
-            <CleanPercentInput
-              value={labourEfficiency}
-              onValue={setLabourEfficiency}
-              className="input"
-              placeholder="0.0"
-              onFocus={(e) => e.currentTarget.select()}
+            <FieldLine
+              label="Margin improvement (pp)"
+              value={marginImprovementPP}
+              onChange={setMarginImprovementPP}
+              info="Gross-margin improvement in percentage points (pp), e.g. 0.5 means +0.5 pp."
             />
-          </div>
-
-          <div className="group">
-            <label>Wastage reduction (%)</label>
-            <CleanPercentInput
-              value={wastageReduction}
-              onValue={setWastageReduction}
-              className="input"
-              placeholder="0.0"
-              onFocus={(e) => e.currentTarget.select()}
+            <FieldLine
+              label="Waste/shrink reduction (%)"
+              value={wasteReductionPct}
+              onChange={setWasteReductionPct}
+              info="Reduction in waste & shrink; treated as direct saving on base revenue."
             />
-          </div>
-
-          <div className="group">
-            <label>Compliance saving / store / year ({currency})</label>
-            <CleanNumberInput
+            <FieldLine
+              label="Labor/OPEX efficiency (%)"
+              value={laborEfficiencyPct}
+              onChange={setLaborEfficiencyPct}
+              info="Direct reduction in operating costs from efficiency (automation, better planning, etc.)."
+            />
+            <FieldLine
+              label={`Compliance savings per store (${currency})`}
               value={complianceSaving}
-              onValue={setComplianceSaving}
-              className="input"
-              placeholder="0"
-              onFocus={(e) => e.currentTarget.select()}
+              onChange={setComplianceSaving}
+              info="Fixed annual saving per store from compliance & reporting efficiency."
             />
           </div>
 
-          <hr />
-
-          <div className="group">
-            <label>Adoption year 1 (%)</label>
-            <CleanPercentInput
-              value={adoptionY1}
-              onValue={setAdoptionY1}
-              className="input"
-              placeholder="0.0"
-              onFocus={(e) => e.currentTarget.select()}
+          <div className="kpi">
+            <h3>Adoption (% of stores live)</h3>
+            <FieldLine
+              label="Year 1 adoption (%)"
+              value={adoptY1}
+              onChange={setAdoptY1}
+              info="Share of stores live during year 1."
             />
-          </div>
-          <div className="group">
-            <label>Adoption year 2 (%)</label>
-            <CleanPercentInput
-              value={adoptionY2}
-              onValue={setAdoptionY2}
-              className="input"
-              placeholder="0.0"
-              onFocus={(e) => e.currentTarget.select()}
+            <FieldLine
+              label="Year 2 adoption (%)"
+              value={adoptY2}
+              onChange={setAdoptY2}
+              info="Share of stores live during year 2."
             />
-          </div>
-          <div className="group">
-            <label>Adoption year 3 (%)</label>
-            <CleanPercentInput
-              value={adoptionY3}
-              onValue={setAdoptionY3}
-              className="input"
-              placeholder="0.0"
-              onFocus={(e) => e.currentTarget.select()}
+            <FieldLine
+              label="Year 3 adoption (%)"
+              value={adoptY3}
+              onChange={setAdoptY3}
+              info="Share of stores live during year 3."
             />
           </div>
         </div>
