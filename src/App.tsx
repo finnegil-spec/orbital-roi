@@ -3,11 +3,11 @@ import ChainROI from "./components/ChainROI";
 import UserGuide from "./components/UserGuide";
 import "./styles.css";
 
-type Currency = "NOK" | "EUR" | "USD" | "ZAR";
+export type Currency = "NOK" | "EUR" | "USD" | "ZAR";
 
 export default function App() {
   const [tab, setTab] = useState<"sim" | "guide">("sim");
-  const [currency, setCurrency] = useState<Currency>("NOK"); // NOK, EUR, USD, ZAR
+  const [currency, setCurrency] = useState<Currency>("NOK");
 
   return (
     <div>
@@ -20,7 +20,7 @@ export default function App() {
           justifyContent: "space-between",
           padding: "10px 16px",
           borderBottom: "1px solid var(--border)",
-          background: "var(--panel)"
+          background: "var(--panel)",
         }}
       >
         <div style={{ display: "flex", gap: 10 }}>
@@ -51,7 +51,7 @@ export default function App() {
               background: "#0f1726",
               border: "1px solid var(--border)",
               color: "var(--text)",
-              borderRadius: 8
+              borderRadius: 8,
             }}
           >
             <option value="NOK">NOK</option>
@@ -66,12 +66,5 @@ export default function App() {
       {tab === "sim" ? <ChainROI currency={currency} /> : <UserGuide />}
     </div>
   );
-}
-
-// Tiny style hook for active tab (piggybacks on styles.css)
-declare global {
-  interface HTMLElement {
-    dataset: { active?: string };
-  }
 }
 
