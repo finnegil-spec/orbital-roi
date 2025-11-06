@@ -1,46 +1,77 @@
-import React, { useState } from 'react'
+ import React, { useState } from "react";
+import ChainROI from "./components/ChainROI";
+import UserGuide from "./components/UserGuide";
+import "./styles.css";
+
+type Currency = "NOK" | "EUR" | "USD" | "ZAR";
 
 export default function App() {
-  const [customers, setCustomers] = useState(2000)
-  const [avgSpend, setAvgSpend] = useState(180)
-  const [upliftPercent, setUpliftPercent] = useState(4)
-
-  const revenueBefore = customers * avgSpend
-  const revenueAfter  = customers * avgSpend * (1 + upliftPercent / 100)
-  const upliftValue   = revenueAfter - revenueBefore
+  const [tab, setTab] = useState<"sim" | "guide">("sim");
+  const [currency, setCurrency] = useState<Currency>("NOK"); // NOK, EUR, USD, ZAR
 
   return (
-    <div className="app-container">
-      <h1>Orbital ROI Simulator</h1>
+    <div>
+      {/* Top bar */}
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px 16px",
+          borderBottom: "1px solid var(--border)",
+          background: "var(--panel)"
+        }}
+      >
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={() => setTab("sim")}
+            className="tab-btn"
+            data-active={tab === "sim"}
+          >
+            Simulator
+          </button>
+          <button
+            onClick={() => setTab("guide")}
+            className="tab-btn"
+            data-active={tab === "guide"}
+          >
+            User Guide
+          </button>
+        </div>
 
-      <label>Antall aktive kunder:</label>
-      <input
-        type="number"
-        value={customers}
-        onChange={(e) => setCustomers(Number(e.target.value))}
-      />
+        {/* Currency selector (no decimals anywhere) */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: "var(--muted)" }}>Currency</span>
+          <select
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value as Currency)}
+            style={{
+              padding: "8px 10px",
+              background: "#0f1726",
+              border: "1px solid var(--border)",
+              color: "var(--text)",
+              borderRadius: 8
+            }}
+          >
+            <option value="NOK">NOK</option>
+            <option value="EUR">EUR</option>
+            <option value="USD">USD</option>
+            <option value="ZAR">ZAR</option>
+          </select>
+        </div>
+      </div>
 
-      <label>Gjennomsnittlig månedlig forbruk per kunde (NOK):</label>
-      <input
-        type="number"
-        value={avgSpend}
-        onChange={(e) => setAvgSpend(Number(e.target.value))}
-      />
-
-      <label>Forventet lojalitetsdrevet omsetningsøkning (%):</label>
-      <input
-        type="number"
-        value={upliftPercent}
-        onChange={(e) => setUpliftPercent(Number(e.target.value))}
-      />
-
-      <hr />
-
-      <p>Omsetning før: <strong>{revenueBefore.toLocaleString('no-NO')} NOK</strong></p>
-      <p>Omsetning etter: <strong>{revenueAfter.toLocaleString('no-NO')} NOK</strong></p>
-      <p>Årlig lojalitetsverdi: <strong>{upliftValue.toLocaleString('no-NO')} NOK</strong></p>
+      {/* Active view */}
+      {tab === "sim" ? <ChainROI currency={currency} /> : <UserGuide />}
     </div>
-  )
+  );
 }
 
+// Tiny style hook for active tab (piggybacks on styles.css)
+declare global {
+  interface HTMLElement {
+    dataset: { active?: string };
+  }
+}
 
